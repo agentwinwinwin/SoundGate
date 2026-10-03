@@ -1,0 +1,17 @@
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: soundgate
+      MYSQL_USER: soundgate
+      MYSQL_PASSWORD: soundgate_password
+      MYSQL_ROOT_PASSWORD: root_password_change_me
+    ports:
+      - "3306:3306"
+    volumes:
+      - soundgate_mysql:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+volumes:
+  soundgate_mysql:

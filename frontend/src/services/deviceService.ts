@@ -1,0 +1,2 @@
+import { createDevice, deleteDevice, fetchDevices, fetchOneNETDevices, fetchOneNETParameters, fetchSchedule, importOneNETDevices, renameBluetooth, saveSchedule, syncOneNETDevices, updateDevice, updateOneNETParameters, updateStreetName } from '@/api/devices'
+export const deviceService = { createDevice, deleteDevice, fetchDevices, fetchOneNETDevices, importOneNETDevices, syncOneNETDevices, fetchOneNETParameters, updateOneNETParameters, fetchSchedule, saveDevice: updateDevice, saveSchedule, renameBluetooth, updateStreetName }

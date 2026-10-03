@@ -1,0 +1,79 @@
+/* Restrained Apple-style action hierarchy shared by every page. */
+.el-button:not(.is-link):not(.is-text) {
+  min-height: 40px;
+  padding: 0 18px;
+  border-color: rgb(23 42 68 / 14%);
+  border-radius: 11px;
+  background: rgb(255 255 255 / 88%);
+  color: #26384f;
+  font-weight: 650;
+  letter-spacing: -.01em;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 5%), 0 5px 14px rgb(15 23 42 / 5%);
+  backdrop-filter: saturate(180%) blur(12px);
+  transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease, background-color .16s ease, color .16s ease;
+}
+
+.el-button:not(.is-link):not(.is-text):hover {
+  border-color: rgb(0 113 227 / 30%);
+  background: #fff;
+  color: #0071e3;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgb(15 23 42 / 7%), 0 9px 22px rgb(15 23 42 / 8%);
+}
+
+.el-button:not(.is-link):not(.is-text):active {
+  transform: scale(.975);
+  box-shadow: 0 1px 3px rgb(15 23 42 / 8%);
+}
+
+.el-button:not(.is-link):not(.is-text):focus-visible {
+  outline: 3px solid rgb(0 122 255 / 20%);
+  outline-offset: 2px;
+}
+
+.el-button--primary:not(.is-link):not(.is-text) {
+  border-color: #0071e3;
+  background: linear-gradient(180deg, #1687f8, #0071e3);
+  color: #fff;
+  box-shadow: 0 2px 4px rgb(0 113 227 / 16%), 0 7px 18px rgb(0 113 227 / 22%);
+}
+
+.el-button--primary:not(.is-link):not(.is-text):hover {
+  border-color: #0077ed;
+  background: linear-gradient(180deg, #2993ff, #0879e8);
+  color: #fff;
+  box-shadow: 0 3px 6px rgb(0 113 227 / 18%), 0 10px 24px rgb(0 113 227 / 26%);
+}
+
+.el-button--primary.is-plain:not(.is-link):not(.is-text) {
+  border-color: rgb(0 113 227 / 22%);
+  background: rgb(0 113 227 / 7%);
+  color: #0071e3;
+  box-shadow: none;
+}
+
+.el-button--danger.is-plain:not(.is-link):not(.is-text) {
+  border-color: rgb(255 59 48 / 22%);
+  background: rgb(255 59 48 / 6%);
+  color: #d92d25;
+  box-shadow: none;
+}
+
+.el-button.is-disabled:not(.is-link):not(.is-text),
+.el-button.is-disabled:not(.is-link):not(.is-text):hover {
+  transform: none;
+  box-shadow: none;
+  opacity: .48;
+}
+
+.el-button.is-link {
+  padding: 5px 8px;
+  border-radius: 7px;
+  font-weight: 650;
+  transition: background-color .16s ease, color .16s ease;
+}
+
+.el-button.is-link:hover { background: rgb(0 113 227 / 7%); }
+.el-button.is-link.el-button--danger:hover { background: rgb(255 59 48 / 7%); }
+.page-heading > .el-button + .el-button,
+.user-menu > .el-button + .el-button { margin-left: 10px; }

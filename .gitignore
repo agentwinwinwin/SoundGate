@@ -1,0 +1,17 @@
+.DS_Store
+.idea/
+.vscode/
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+backend/.venv/
+backend/.env
+backend/**/__pycache__/
+*.pyc
+*.sqlite3
+*.log
+.coverage
+htmlcov/
+docs/*.docx
+package_source/
+tools/onenet_c_test/set_property

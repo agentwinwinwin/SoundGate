@@ -1,0 +1,13 @@
+import django.core.validators
+import django.db.models.deletion
+from django.db import migrations, models
+
+class Migration(migrations.Migration):
+    initial = True
+    dependencies = []
+    operations = [
+        migrations.CreateModel(name='Device', fields=[('device_id', models.CharField(max_length=64, primary_key=True, serialize=False, verbose_name='设备编号')), ('name', models.CharField(max_length=128, verbose_name='设备名称')), ('online', models.BooleanField(default=False, verbose_name='在线')), ('enabled', models.BooleanField(default=False, verbose_name='开启')), ('volume', models.PositiveSmallIntegerField(default=0, validators=[django.core.validators.MinValueValidator(0), django.core.validators.MaxValueValidator(9)], verbose_name='当前音量')), ('last_seen_at', models.DateTimeField(blank=True, null=True, verbose_name='最后通信时间')), ('gps_status', models.CharField(choices=[('normal', '正常'), ('error', '异常'), ('no_signal', '无信号')], default='no_signal', max_length=16, verbose_name='GPS 状态')), ('cloud_connected', models.BooleanField(default=False, verbose_name='云端连接')), ('bluetooth_name', models.CharField(max_length=32, verbose_name='蓝牙名称')), ('created_at', models.DateTimeField(auto_now_add=True)), ('updated_at', models.DateTimeField(auto_now=True))], options={'ordering': ['device_id']}),
+        migrations.CreateModel(name='AudioConfig', fields=[('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')), ('street_name', models.CharField(blank=True, max_length=200, verbose_name='街道名称')), ('walk_file_name', models.CharField(blank=True, max_length=255)), ('rush_file_name', models.CharField(blank=True, max_length=255)), ('custom_file_name', models.CharField(blank=True, max_length=255)), ('updated_at', models.DateTimeField(auto_now=True)), ('device', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='audio_config', to='devices.device'))]),
+        migrations.CreateModel(name='ScheduleSlot', fields=[('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')), ('weekday', models.PositiveSmallIntegerField(choices=[(1, '周一'), (2, '周二'), (3, '周三'), (4, '周四'), (5, '周五'), (6, '周六'), (7, '周日')])), ('time', models.TimeField()), ('volume', models.PositiveSmallIntegerField(validators=[django.core.validators.MinValueValidator(0), django.core.validators.MaxValueValidator(9)])), ('device', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='schedule_slots', to='devices.device'))], options={'ordering': ['weekday', 'time']}),
+        migrations.AddConstraint(model_name='scheduleslot', constraint=models.UniqueConstraint(fields=('device', 'weekday', 'time'), name='unique_device_weekday_time')),
+    ]

@@ -1,0 +1,6 @@
+.device-context { margin: 0 3px 17px; padding: 12px; border: 1px solid #dce6f2; border-radius: 13px; background: #f8faff; }
+.device-context label { display: block; margin-bottom: 8px; color: #40546d; font-size: 11px; font-weight: 800; }
+.device-context > .el-select { width: 100%; }
+.device-context > small { display: block; margin-top: 7px; color: var(--muted); font-size: 10px; }
+.device-option { display: flex; justify-content: space-between; gap: 18px; }
+.device-option small { color: var(--muted); }
