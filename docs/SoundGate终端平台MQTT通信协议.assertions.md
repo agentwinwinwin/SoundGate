@@ -131,9 +131,9 @@
 
 **Claim** 后端协议清单只把有完整实机闭环证据的字段标记为已验证。
 
-**Setup** 读取协议清单和当前实机测试结果，其中四个字段已完成设置、读取和恢复闭环，五个字段主动读取超时。
+**Setup** 读取协议清单、2026年10月终端修正说明和平台回归结果；区分“终端回复已修正”“平台回归通过”和“业务弃用”。
 
-**Observation** `DftVolume`、`Period`、`RushTime`和`WalkTime`必须标为已验证；`DftEnable`、`DftStHour`、`DftStMinute`、`DtfEdHour`和`DftEdMinute`必须保持未验证。不得因OneNET存在字段或写接口返回受理而提升验证状态。
+**Observation** 六个仍用字段必须暴露真实读写能力；`Period`、`RushTime`和`WalkTime`必须标为兼容且弃用。文件能力必须区分`server_validation_ready`和`pending_joint_test`，不得因OneNET受理或服务端已存文件就标为终端传输成功。
 
 **Kind** `contract`
 

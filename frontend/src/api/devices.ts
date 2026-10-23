@@ -30,6 +30,18 @@ export async function deleteDevice(id: string) { await apiClient.delete(`/device
 export type LocalDeliveryResult = { delivery: 'local_only' | 'pending_terminal_protocol'; terminalConfirmed: false }
 export async function updateStreetName(id: string, streetName: string) { return (await apiClient.patch<LocalDeliveryResult & { streetName: string }>(`/devices/${id}/audio-config/`, { streetName })).data }
 export async function renameBluetooth(id: string, bluetoothName: string, password: string) { return (await apiClient.post<LocalDeliveryResult & { bluetoothName: string; accepted: true }>(`/devices/${id}/rename-bluetooth/`, { bluetoothName, password })).data }
+export type AudioUploadResult = {
+  file: { kind: 'walk' | 'rush' | 'custom'; fileName: string; size: number; duration: number; channels: number; sampleRate: number; bitDepth: number; crc32: string }
+  accepted: true
+  terminalConfirmed: false
+  delivery: 'server_validated'
+  transferPlan: { transferId: string; totalChunks: number; rawChunkBytes: number; transportReady: false }
+  nextStep: string
+}
+export async function uploadAudioFile(id: string, kind: 'walk' | 'rush' | 'custom', file: File) {
+  const form = new FormData(); form.append('kind', kind); form.append('file', file)
+  return (await apiClient.post<AudioUploadResult>(`/devices/${id}/audio-files/`, form, { timeout: 30000 })).data
+}
 export type OneNETParameters = {
   DftEdMinute: number; DftEnable: number; DftStHour: number; DftStMinute: number
   DftVolume: number; DtfEdHour: number; Period: number; RushTime: number; WalkTime: number

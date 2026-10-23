@@ -1,15 +1,18 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
+from io import BytesIO
 import json
 import re
+import wave
 
 from django.test import SimpleTestCase, override_settings
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from .onenet import MAX_FRAME_BYTES, OneNETError, _set_modern_properties, build_device_frame, get_device_parameters, set_device_properties
-from .device_protocol import compact_json, prepare_file_transfer, protocol_manifest
+from .device_protocol import compact_json, prepare_file_transfer, protocol_manifest, validate_wav_bytes
 from .models import AudioConfig, Device
 
 
@@ -46,7 +49,9 @@ class OneNETProtocolTests(SimpleTestCase):
         manifest = protocol_manifest()
         self.assertEqual(manifest['bluetooth']['status'], 'pending_terminal_protocol')
         self.assertEqual(manifest['streetAudio']['status'], 'local_only')
-        self.assertEqual(manifest['audio']['status'], 'pending_terminal_protocol')
+        self.assertEqual(manifest['audio']['status'], 'server_validation_ready')
+        self.assertEqual(manifest['fileTransfer']['transportStatus'], 'pending_joint_test')
+        self.assertEqual(manifest['signalController']['status'], 'requirements_pending')
         self.assertEqual(manifest['bluetooth']['maxNameBytes'], 32)
 
     def test_documented_mqtt_json_samples_are_valid_and_within_limit(self):
@@ -64,6 +69,16 @@ class OneNETProtocolTests(SimpleTestCase):
         transfer = prepare_file_transfer('walk', 'walk.wav', 4096, '1234abcd')
         self.assertLessEqual(transfer['worstCaseChunkFrameBytes'], 200)
         self.assertLessEqual(len(compact_json(transfer['beginFrame'])), 200)
+
+    def test_wav_validation_accepts_terminal_format(self):
+        output = BytesIO()
+        with wave.open(output, 'wb') as wav:
+            wav.setnchannels(1); wav.setsampwidth(1); wav.setframerate(8000)
+            wav.writeframes(bytes([128]) * 16000)
+        result = validate_wav_bytes('rush', output.getvalue())
+        self.assertEqual(result['duration'], 2.0)
+        self.assertEqual(result['sampleRate'], 8000)
+        self.assertRegex(result['crc32'], r'^[0-9a-f]{8}$')
 
     @override_settings(ONENET_AUTH_MODE='api_key', ONENET_API_KEY='test-key')
     @patch('devices.onenet._send_legacy_command')
@@ -230,5 +245,21 @@ class PendingTerminalContractTests(APITestCase):
     def test_protocol_endpoint_exposes_pending_capabilities(self):
         response = self.client.get('/api/devices/SG000001/protocol/')
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data['fileTransfer']['status'], 'reserved')
+        self.assertEqual(response.data['fileTransfer']['status'], 'preflight_ready')
         self.assertEqual(response.data['bluetooth']['status'], 'pending_terminal_protocol')
+
+    def test_audio_upload_is_server_validated_but_not_terminal_confirmed(self):
+        output = BytesIO()
+        with wave.open(output, 'wb') as wav:
+            wav.setnchannels(1); wav.setsampwidth(1); wav.setframerate(8000)
+            wav.writeframes(bytes([128]) * 16000)
+        uploaded = SimpleUploadedFile('rush.wav', output.getvalue(), content_type='audio/wav')
+        response = self.client.post(
+            '/api/devices/SG000001/audio-files/',
+            {'kind': 'rush', 'file': uploaded}, format='multipart',
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data['file']['duration'], 2.0)
+        self.assertEqual(response.data['delivery'], 'server_validated')
+        self.assertFalse(response.data['terminalConfirmed'])
+        self.assertFalse(response.data['transferPlan']['transportReady'])

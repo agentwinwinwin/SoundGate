@@ -4,6 +4,7 @@ import { UploadFilled, CircleCheckFilled, CircleCloseFilled } from '@element-plu
 import type { AudioValidation } from '@/types/device'
 
 const props = defineProps<{ label: string; maxDuration: number }>()
+const emit = defineEmits<{ validated: [file: File] }>()
 const result = ref<AudioValidation>()
 async function choose(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0]; if (!file) return
@@ -23,6 +24,7 @@ async function choose(event: Event) {
   if (bitDepth !== undefined && bitDepth !== 8) errors.push('位深必须为 8bit')
   if (duration !== undefined && duration > props.maxDuration + .05) errors.push(`时长不能超过 ${props.maxDuration} 秒`)
   result.value = { valid: errors.length === 0, fileName: file.name, channels, sampleRate, bitDepth, duration, errors }
+  if (errors.length === 0) emit('validated', file)
 }
 </script>
 <template>

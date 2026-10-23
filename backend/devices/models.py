@@ -50,4 +50,5 @@ class AudioConfig(models.Model):
     walk_file_name = models.CharField(max_length=255, blank=True)
     rush_file_name = models.CharField(max_length=255, blank=True)
     custom_file_name = models.CharField(max_length=255, blank=True)
+    file_metadata = models.JSONField(default=dict, blank=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -10,7 +10,7 @@ import PageHeading from '@/components/PageHeading.vue'
 
 const store = useDeviceStore(); const route = useRoute()
 const bluetoothForm = reactive({ name: '', password: '' })
-const workForm = reactive({ DftStHour: 0, DftStMinute: 0, DtfEdHour: 23, DftEdMinute: 59, Period: 60, RushTime: 8, WalkTime: 15 })
+const workForm = reactive({ DftStHour: 0, DftStMinute: 0, DtfEdHour: 23, DftEdMinute: 59 })
 const parameterState = ref<Partial<Record<keyof OneNETParameters, OneNETParameterState>>>({})
 const loading = ref(false); const saving = ref(false)
 const startTime = computed(() => `${String(workForm.DftStHour).padStart(2, '0')}:${String(workForm.DftStMinute).padStart(2, '0')}`)
@@ -48,7 +48,7 @@ onMounted(async () => { store.select(String(route.params.id)); bluetoothForm.nam
 </script>
 
 <template>
-  <PageHeading title="设备设置" description="配置终端工作时间和交通信号周期。"><el-button :loading="loading" @click="loadWorkParameters">重新读取</el-button></PageHeading>
+  <PageHeading title="设备设置" description="配置终端工作时间，并查看信号机接口约定。"><el-button :loading="loading" @click="loadWorkParameters">重新读取</el-button></PageHeading>
   <section class="card">
     <div class="card-title"><div><h3>终端工作时段</h3><p>参数设置使能开启后，终端每天按此时段工作</p></div><el-tag>{{ startTime }} — {{ endTime }}</el-tag></div>
     <el-form label-position="top" :disabled="loading || saving"><div class="parameter-grid">
@@ -59,13 +59,9 @@ onMounted(async () => { store.select(String(route.params.id)); bluetoothForm.nam
     </div></el-form>
   </section>
   <section class="card">
-    <div class="card-title"><div><h3>交通信号参数</h3><p>单位为秒，对应终端固件的周期参数</p></div></div>
-    <el-form label-position="top" :disabled="loading || saving"><div class="parameter-grid three">
-      <el-form-item label="信号周期 (Period)"><el-input-number v-model="workForm.Period" :min="0"/><small>{{ stateText('Period') }}</small></el-form-item>
-      <el-form-item label="车行时间 (RushTime)"><el-input-number v-model="workForm.RushTime" :min="0"/><small>{{ stateText('RushTime') }}</small></el-form-item>
-      <el-form-item label="行人通行时间 (WalkTime)"><el-input-number v-model="workForm.WalkTime" :min="0"/><small>{{ stateText('WalkTime') }}</small></el-form-item>
-    </div></el-form>
-    <div class="action-row"><span class="muted">DftEnable 在设备管理页设置；DftVolume 在设备详情和音量计划中设置。</span><el-button type="primary" :loading="saving" :disabled="loading" @click="saveWorkParameters">保存并下发</el-button></div>
+    <div class="card-title"><div><h3>信号机接口</h3><p>终端按外部信号工作，不再由平台写 Period、RushTime、WalkTime</p></div><el-tag type="warning">协议待信号机厂商确认</el-tag></div>
+    <div class="signal-contract"><span><b>开关输入</b> 1 路</span><span><b>绿灯输入</b> 1 路</span><span><b>红灯输入</b> 1 路</span><span><b>RS-485</b> 帧格式、波特率、地址和校验方式待提供</span></div>
+    <div class="action-row"><span class="muted">DftEnable 在设备管理页设置；DftVolume 在设备详情和音量计划中设置。</span><el-button type="primary" :loading="saving" :disabled="loading" @click="saveWorkParameters">保存工作时段并下发</el-button></div>
   </section>
   <div class="detail-grid">
     <section class="card info-list"><div class="card-title"><h3>设备信息</h3></div><div><span>设备名称</span><b>{{ store.selected.name }}</b></div><div><span>设备编号</span><b>{{ store.selected.id }}</b></div><div><span>当前蓝牙名称</span><b>{{ store.selected.bluetoothName }}</b></div><div><span>在线状态</span><DeviceStatus :online="store.selected.online"/></div></section>
@@ -74,5 +70,5 @@ onMounted(async () => { store.select(String(route.params.id)); bluetoothForm.nam
 </template>
 
 <style scoped>
-.parameter-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}.parameter-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}.parameter-grid small{display:block;margin-top:8px;color:#8290a6;font-size:12px}.parameter-grid :deep(.el-input-number){width:100%}.action-row{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-top:8px}@media(max-width:1000px){.parameter-grid,.parameter-grid.three{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:640px){.parameter-grid,.parameter-grid.three{grid-template-columns:1fr}.action-row{align-items:stretch;flex-direction:column}}
+.parameter-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}.parameter-grid small{display:block;margin-top:8px;color:#8290a6;font-size:12px}.parameter-grid :deep(.el-input-number){width:100%}.signal-contract{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.signal-contract span{padding:16px;border-radius:16px;background:#f5f7fb;color:#66758c}.signal-contract b{display:block;margin-bottom:5px;color:#182c49}.action-row{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-top:20px}@media(max-width:1000px){.parameter-grid,.signal-contract{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:640px){.parameter-grid,.signal-contract{grid-template-columns:1fr}.action-row{align-items:stretch;flex-direction:column}}
 </style>

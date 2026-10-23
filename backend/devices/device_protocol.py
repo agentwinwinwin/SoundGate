@@ -1,25 +1,40 @@
 import base64
+import io
 import json
 import re
 import uuid
+import wave
+import zlib
 
 MAX_FRAME_BYTES = 200
 FILE_RAW_CHUNK_BYTES = 96
 FILE_KINDS = {'walk', 'rush', 'custom'}
 
 PROPERTY_DEFINITIONS = {
-    'DftEnable': {'name': '参数设置使能', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 1, 'unit': '', 'verified': False},
+    'DftEnable': {'name': '参数设置使能', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 1, 'unit': '', 'verified': True},
     'DftVolume': {'name': '喇叭音量', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 9, 'unit': 'level', 'verified': True},
-    'DftStHour': {'name': '工作开始小时', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 23, 'unit': 'hour', 'verified': False},
-    'DftStMinute': {'name': '工作开始分钟', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 59, 'unit': 'minute', 'verified': False},
-    'DtfEdHour': {'name': '工作结束小时', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 23, 'unit': 'hour', 'verified': False},
-    'DftEdMinute': {'name': '工作结束分钟', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 59, 'unit': 'minute', 'verified': False},
-    'Period': {'name': '工作周期', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 3600, 'unit': 'second', 'verified': True},
-    'RushTime': {'name': '快行时间', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 3600, 'unit': 'second', 'verified': True},
-    'WalkTime': {'name': '慢行时间', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 3600, 'unit': 'second', 'verified': True},
+    'DftStHour': {'name': '工作开始小时', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 23, 'unit': 'hour', 'verified': True},
+    'DftStMinute': {'name': '工作开始分钟', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 59, 'unit': 'minute', 'verified': True},
+    'DtfEdHour': {'name': '工作结束小时', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 23, 'unit': 'hour', 'verified': True},
+    'DftEdMinute': {'name': '工作结束分钟', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 59, 'unit': 'minute', 'verified': True},
+    'Period': {'name': '工作周期（兼容）', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 3600, 'unit': 'second', 'verified': True, 'deprecated': True},
+    'RushTime': {'name': '快行时间（兼容）', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 3600, 'unit': 'second', 'verified': True, 'deprecated': True},
+    'WalkTime': {'name': '慢行时间（兼容）', 'type': 'int32', 'access': 'rw', 'min': 0, 'max': 3600, 'unit': 'second', 'verified': True, 'deprecated': True},
     'ID': {'name': '终端编号', 'type': 'int32', 'access': 'r', 'unit': '', 'verified': True},
     'Noise': {'name': '现场噪声', 'type': 'int32', 'access': 'r', 'unit': 'raw', 'verified': True},
-    'State': {'name': '设备工作状态', 'type': 'int32', 'access': 'r', 'min': 0, 'max': 1, 'unit': '', 'verified': True},
+    'State': {'name': '设备状态位图', 'type': 'uint32', 'access': 'r', 'min': 0, 'max': 4294967295, 'unit': 'bitmask', 'verified': True},
+}
+
+STATE_BITS = {
+    0: '设备异常',
+    1: 'GPS异常',
+    2: 'RTC电池欠压',
+    3: '音频文件异常',
+    4: 'Flash写入异常',
+    5: '噪声传感器异常',
+    6: '功放异常',
+    7: '通信模块异常',
+    8: '电源异常',
 }
 
 
@@ -74,15 +89,55 @@ def prepare_file_transfer(kind, filename, size, crc32):
     }
 
 
+def validate_wav_bytes(kind, content):
+    if kind not in FILE_KINDS:
+        raise ValueError('文件类型必须为 walk、rush 或 custom')
+    if not content:
+        raise ValueError('WAV 文件不能为空')
+    try:
+        with wave.open(io.BytesIO(content), 'rb') as wav:
+            channels = wav.getnchannels()
+            sample_rate = wav.getframerate()
+            bit_depth = wav.getsampwidth() * 8
+            frames = wav.getnframes()
+            compression = wav.getcomptype()
+    except (EOFError, wave.Error) as exc:
+        raise ValueError('无法解析 WAV 文件头') from exc
+    duration = frames / sample_rate if sample_rate else 0
+    max_duration = 24 if kind == 'custom' else 4
+    errors = []
+    if compression != 'NONE': errors.append('必须为 PCM 编码')
+    if channels != 1: errors.append('必须为单声道')
+    if sample_rate != 8000: errors.append('采样率必须为 8000Hz')
+    if bit_depth != 8: errors.append('位深必须为 8bit')
+    if duration > max_duration + 0.001: errors.append(f'{kind} 时长不能超过 {max_duration} 秒')
+    if errors:
+        raise ValueError('；'.join(errors))
+    return {
+        'kind': kind, 'size': len(content), 'duration': round(duration, 3),
+        'channels': channels, 'sampleRate': sample_rate, 'bitDepth': bit_depth,
+        'crc32': f'{zlib.crc32(content) & 0xffffffff:08x}',
+    }
+
+
 def protocol_manifest():
     return {
-        'version': '1.0',
+        'version': '1.1',
         'encoding': 'UTF-8 compact JSON',
         'maxFrameBytes': MAX_FRAME_BYTES,
         'properties': PROPERTY_DEFINITIONS,
+        'stateBits': STATE_BITS,
+        'schedule': {
+            'platformMode': 'time_point_volume',
+            'terminalMode': 'pending_contract',
+            'terminalSlotFields': ['seq', 'day', 'start', 'finish', 'volume', 'enable'],
+            'overlapPolicy': 'reject',
+            'timezoneOwner': 'platform_converts_to_utc',
+        },
         'fileTransfer': {
-            'status': 'reserved', 'rawChunkBytes': FILE_RAW_CHUNK_BYTES,
+            'status': 'preflight_ready', 'rawChunkBytes': FILE_RAW_CHUNK_BYTES,
             'encoding': 'Base64', 'checksum': 'CRC32', 'kinds': sorted(FILE_KINDS),
+            'transportStatus': 'pending_joint_test',
         },
         'bluetooth': {
             'status': 'pending_terminal_protocol', 'maxNameBytes': 32,
@@ -93,7 +148,12 @@ def protocol_manifest():
             'selectedMode': None,
         },
         'audio': {
-            'status': 'pending_terminal_protocol', 'kinds': sorted(FILE_KINDS),
+            'status': 'server_validation_ready', 'kinds': sorted(FILE_KINDS),
             'commands': ['audio_get', 'audio_info', 'audio_play', 'audio_stop'],
+        },
+        'signalController': {
+            'status': 'requirements_pending',
+            'digitalInputsRequired': ['enable', 'green', 'red'],
+            'rs485': {'status': 'vendor_protocol_required'},
         },
     }

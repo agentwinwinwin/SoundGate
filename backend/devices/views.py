@@ -6,12 +6,15 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.contrib.auth import authenticate, get_user_model
 from django.conf import settings
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
+from django.utils.text import get_valid_filename
 from datetime import datetime, timezone as datetime_timezone
 from .models import AudioConfig, Device
 from .serializers import AudioConfigSerializer, BluetoothRenameSerializer, DeviceCreateSerializer, DeviceSerializer, OneNETImportSerializer, OneNETParametersSerializer, ScheduleSlotSerializer, WeeklyScheduleSerializer
 from .onenet import OneNETError, OneNETNotConfigured, get_device_parameters, get_device_snapshot, list_product_devices, set_device_properties
 from .schedule_dispatch import dispatch_current_volume
-from .device_protocol import prepare_file_transfer, protocol_manifest
+from .device_protocol import prepare_file_transfer, protocol_manifest, validate_wav_bytes
 
 
 def apply_onenet_snapshot(device, snapshot):
@@ -233,6 +236,49 @@ class DeviceViewSet(viewsets.ModelViewSet):
         except (TypeError, ValueError) as exc:
             return Response({'detail': str(exc)}, status=400)
         return Response(result)
+
+    @action(detail=True, methods=['post'], url_path='audio-files')
+    def audio_files(self, request, device_id=None):
+        device = self.get_object()
+        kind = str(request.data.get('kind', ''))
+        upload = request.FILES.get('file')
+        if upload is None:
+            return Response({'detail': '请上传 file 字段。'}, status=400)
+        if not upload.name.lower().endswith('.wav'):
+            return Response({'detail': '只允许 WAV 文件。'}, status=400)
+        content = upload.read()
+        try:
+            metadata = validate_wav_bytes(kind, content)
+            plan = prepare_file_transfer(kind, upload.name, len(content), metadata['crc32'])
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=400)
+
+        config, _ = AudioConfig.objects.get_or_create(device=device)
+        total_duration = metadata['duration'] + sum(
+            float(item.get('duration', 0))
+            for saved_kind, item in config.file_metadata.items()
+            if saved_kind != kind and isinstance(item, dict)
+        )
+        if total_duration > 32.001:
+            return Response({'detail': f'三类音频总时长 {total_duration:.3f} 秒，不能超过 32 秒。'}, status=400)
+        old_name = getattr(config, f'{kind}_file_name')
+        if old_name and default_storage.exists(old_name):
+            default_storage.delete(old_name)
+        safe_name = get_valid_filename(upload.name) or f'{kind}.wav'
+        storage_name = default_storage.save(
+            f'audio/{device.device_id}/{kind}/{safe_name}', ContentFile(content),
+        )
+        setattr(config, f'{kind}_file_name', storage_name)
+        config.file_metadata = {**config.file_metadata, kind: {**metadata, 'fileName': upload.name}}
+        config.save(update_fields=[f'{kind}_file_name', 'file_metadata', 'updated_at'])
+        return Response({
+            'file': config.file_metadata[kind], 'totalDuration': round(total_duration, 3),
+            'accepted': True,
+            'terminalConfirmed': False,
+            'delivery': 'server_validated',
+            'transferPlan': plan,
+            'nextStep': '等待确认 OneNET 自定义 Topic 后进行终端分片联调',
+        }, status=201)
 
     @action(detail=True, methods=['post'], url_path='rename-bluetooth')
     def rename_bluetooth(self, request, device_id=None):

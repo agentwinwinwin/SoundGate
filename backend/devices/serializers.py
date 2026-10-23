@@ -103,8 +103,8 @@ class AudioConfigSerializer(serializers.ModelSerializer):
     streetName = serializers.CharField(source='street_name', allow_blank=True)
     class Meta:
         model = AudioConfig
-        fields = ['streetName', 'walk_file_name', 'rush_file_name', 'custom_file_name', 'updated_at']
-        read_only_fields = ['walk_file_name', 'rush_file_name', 'custom_file_name', 'updated_at']
+        fields = ['streetName', 'walk_file_name', 'rush_file_name', 'custom_file_name', 'file_metadata', 'updated_at']
+        read_only_fields = ['walk_file_name', 'rush_file_name', 'custom_file_name', 'file_metadata', 'updated_at']
 
 class BluetoothRenameSerializer(serializers.Serializer):
     bluetoothName = serializers.CharField(max_length=32)

@@ -18,11 +18,13 @@
 | 登录、注册、账号设备隔离 | 已实现 |
 | OneNET设备发现与导入 | 已实现 |
 | 设备在线状态与属性同步 | 已实现 |
-| 开关、音量、工作时段和信号参数 | 已接入；成功状态以终端真实上报为准 |
+| 开关、音量和工作时段 | 终端读写回复已修正；成功状态以真实读回为准 |
+| 信号机联动 | 3路输入已提出；RS-485电气和厂商协议待确认 |
 | 每周音量计划 | 已实现；平台只在对应日期下发当天音量 |
 | 街道名称 | 当前只保存平台配置，未同步终端 |
 | 蓝牙名称 | 当前只保存平台配置，终端协议待接入 |
-| WAV文件传输与测试播放 | 协议已设计，后端和终端传输链路待实现 |
+| WAV文件上传 | 服务端格式复验、CRC32和分片规划已实现 |
+| WAV终端传输与测试播放 | MQTT帧已设计，待确认Topic并联合调试 |
 
 详细协议和未完成边界见[MQTT通信协议](docs/SoundGate终端平台MQTT通信协议.md)。
 
@@ -97,6 +99,7 @@ backend/.venv/bin/python backend/manage.py run_schedule_dispatcher
 - `GET/POST /api/devices/{device_id}/onenet/parameters/`
 - `GET/PUT /api/devices/{device_id}/schedule/`
 - `GET/PATCH /api/devices/{device_id}/audio-config/`
+- `POST /api/devices/{device_id}/audio-files/`
 - `POST /api/devices/{device_id}/rename-bluetooth/`
 - `GET /api/devices/{device_id}/protocol/`
 

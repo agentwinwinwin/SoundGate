@@ -6,6 +6,7 @@ frontend/dist/
 frontend/.env
 backend/.venv/
 backend/.env
+backend/media/
 backend/**/__pycache__/
 *.pyc
 *.sqlite3
