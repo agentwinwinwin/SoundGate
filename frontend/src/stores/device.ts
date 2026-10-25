@@ -53,6 +53,6 @@ export const useDeviceStore = defineStore('device', {
     },
     copyDay(from: Weekday, targets: Weekday[]) { targets.forEach(day => { this.schedule[day] = this.schedule[from].map(s => ({ ...s, id: crypto.randomUUID() })) }) },
     async saveStreetName() { await deviceService.updateStreetName(this.selected.id, this.selected.streetName) },
-    async renameBluetooth(name: string, password: string) { const result = await deviceService.renameBluetooth(this.selected.id, name, password); this.selected.bluetoothName = result.bluetoothName },
+    async renameBluetooth(name: string, password: string) { return await deviceService.renameBluetooth(this.selected.id, name, password) },
   },
 })

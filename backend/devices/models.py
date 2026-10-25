@@ -2,6 +2,10 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.conf import settings
 
+
+def default_signal_inputs():
+    return {'enable': 1, 'green': 1, 'red': 1}
+
 class Device(models.Model):
     class GPSStatus(models.TextChoices):
         NORMAL = 'normal', '正常'
@@ -51,4 +55,75 @@ class AudioConfig(models.Model):
     rush_file_name = models.CharField(max_length=255, blank=True)
     custom_file_name = models.CharField(max_length=255, blank=True)
     file_metadata = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class DeviceAudioFile(models.Model):
+    class Kind(models.TextChoices):
+        WALK = 'walk', '慢行提示音'
+        RUSH = 'rush', '快行提示音'
+        CUSTOM = 'custom', '自定义音频'
+
+    device = models.ForeignKey(Device, related_name='audio_files', on_delete=models.CASCADE)
+    kind = models.CharField(max_length=16, choices=Kind.choices)
+    file = models.FileField(upload_to='audio/%Y/%m/%d')
+    original_name = models.CharField(max_length=255)
+    size = models.PositiveIntegerField()
+    duration_ms = models.PositiveIntegerField()
+    crc32 = models.CharField(max_length=8)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class TerminalCommand(models.Model):
+    class Status(models.TextChoices):
+        QUEUED = 'queued', '排队中'
+        SENT = 'sent', '已发送'
+        PROCESSING = 'processing', '终端处理中'
+        SUCCEEDED = 'succeeded', '已确认'
+        FAILED = 'failed', '失败'
+        CANCELLED = 'cancelled', '已取消'
+
+    device = models.ForeignKey(Device, related_name='terminal_commands', on_delete=models.CASCADE)
+    request_id = models.CharField(max_length=16, unique=True)
+    command_type = models.CharField(max_length=32)
+    payload = models.JSONField(default=dict)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    response = models.JSONField(default=dict, blank=True)
+    error = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+
+
+class FileTransfer(models.Model):
+    class Status(models.TextChoices):
+        QUEUED = 'queued', '排队中'
+        TRANSFERRING = 'transferring', '传输中'
+        VERIFYING = 'verifying', '终端校验中'
+        SUCCEEDED = 'succeeded', '已完成'
+        FAILED = 'failed', '失败'
+        CANCELLED = 'cancelled', '已取消'
+
+    device = models.ForeignKey(Device, related_name='file_transfers', on_delete=models.CASCADE)
+    audio_file = models.ForeignKey(DeviceAudioFile, related_name='transfers', on_delete=models.PROTECT)
+    transfer_id = models.CharField(max_length=16, unique=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED)
+    next_chunk = models.PositiveIntegerField(default=0)
+    awaiting_chunk = models.IntegerField(null=True, blank=True)
+    total_chunks = models.PositiveIntegerField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    error = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+
+
+class SignalInterfaceConfig(models.Model):
+    device = models.OneToOneField(Device, related_name='signal_interface', on_delete=models.CASCADE)
+    mode = models.CharField(max_length=8, choices=[('io', '数字输入'), ('rs485', 'RS-485')], default='io')
+    io_inputs = models.JSONField(default=default_signal_inputs)
+    rs485 = models.JSONField(default=dict, blank=True)
+    confirmed = models.BooleanField(default=False)
     updated_at = models.DateTimeField(auto_now=True)

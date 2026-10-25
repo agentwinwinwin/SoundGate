@@ -19,12 +19,12 @@
 | OneNET设备发现与导入 | 已实现 |
 | 设备在线状态与属性同步 | 已实现 |
 | 开关、音量和工作时段 | 已有OneNET读写联调成功记录；运行时仍以真实读回为准 |
-| 信号机联动 | 3路输入已提出；RS-485电气和厂商协议待确认 |
+| 信号机联动 | 后端已支持IO/RS-485配置和状态上报留存；现场电气及厂商帧协议待确认 |
 | 每周音量计划 | 已实现；平台只在对应日期下发当天音量 |
-| 街道名称 | 当前只保存平台配置，未同步终端 |
-| 蓝牙名称 | 当前只保存平台配置，终端协议待接入 |
+| 街道名称 | 支持平台WAV方案；终端具备TTS时可切换为`street_set`命令并等待ACK |
+| 蓝牙名称 | `bt_set/bt_get/bt_info`任务、ACK状态和真实名称回写已实现，待真机Topic联调 |
 | WAV文件上传 | 服务端格式复验、CRC32和分片规划已实现 |
-| WAV终端传输与测试播放 | MQTT帧已设计，待确认Topic并联合调试 |
+| WAV终端传输与测试播放 | 后端分片、逐片ACK、重试、取消、CRC完成确认及播放命令已实现；待确认Topic并真机联调 |
 
 详细协议和未完成边界见[MQTT通信协议](docs/SoundGate终端平台MQTT通信协议.md)。
 
@@ -87,6 +87,7 @@ npm run dev
 ```bash
 backend/.venv/bin/python backend/manage.py run_onenet_listener
 backend/.venv/bin/python backend/manage.py run_schedule_dispatcher
+backend/.venv/bin/python backend/manage.py run_device_command_worker
 ```
 
 ## 主要API
@@ -100,7 +101,13 @@ backend/.venv/bin/python backend/manage.py run_schedule_dispatcher
 - `GET/PUT /api/devices/{device_id}/schedule/`
 - `GET/PATCH /api/devices/{device_id}/audio-config/`
 - `POST /api/devices/{device_id}/audio-files/`
+- `POST/GET /api/devices/{device_id}/file-transfers/...`
+- `GET /api/devices/{device_id}/audio/manifest/`
+- `POST /api/devices/{device_id}/audio/play/`、`audio/stop/`
 - `POST /api/devices/{device_id}/rename-bluetooth/`
+- `GET /api/devices/{device_id}/bluetooth/`
+- `GET/PATCH /api/devices/{device_id}/signal-interface/`
+- `GET /api/devices/{device_id}/commands/{request_id}/`
 - `GET /api/devices/{device_id}/protocol/`
 
 ## 测试与构建

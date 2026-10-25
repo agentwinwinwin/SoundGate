@@ -5,16 +5,26 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.contrib.auth import authenticate, get_user_model
+from django.shortcuts import get_object_or_404
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.utils.text import get_valid_filename
 from datetime import datetime, timezone as datetime_timezone
-from .models import AudioConfig, Device
-from .serializers import AudioConfigSerializer, BluetoothRenameSerializer, DeviceCreateSerializer, DeviceSerializer, OneNETImportSerializer, OneNETParametersSerializer, ScheduleSlotSerializer, WeeklyScheduleSerializer
+import uuid
+from .models import AudioConfig, Device, DeviceAudioFile, FileTransfer, SignalInterfaceConfig, TerminalCommand
+from .serializers import AudioConfigSerializer, BluetoothRenameSerializer, DeviceAudioFileSerializer, DeviceCreateSerializer, DeviceSerializer, FileTransferSerializer, OneNETImportSerializer, OneNETParametersSerializer, ScheduleSlotSerializer, SignalInterfaceSerializer, TerminalCommandSerializer, WeeklyScheduleSerializer
 from .onenet import OneNETError, OneNETNotConfigured, get_device_parameters, get_device_snapshot, list_product_devices, set_device_properties
 from .schedule_dispatch import dispatch_current_volume
-from .device_protocol import prepare_file_transfer, protocol_manifest, validate_wav_bytes
+from .device_protocol import build_command, prepare_file_transfer, protocol_manifest, validate_wav_bytes
+
+
+def enqueue_command(device, command_type, **params):
+    request_id = uuid.uuid4().hex[:8]
+    payload = build_command(command_type, request_id, **params)
+    return TerminalCommand.objects.create(
+        device=device, request_id=request_id, command_type=command_type, payload=payload,
+    )
 
 
 def apply_onenet_snapshot(device, snapshot):
@@ -209,14 +219,19 @@ class DeviceViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get', 'patch'], url_path='audio-config')
     def audio_config(self, request, device_id=None):
-        config, _ = AudioConfig.objects.get_or_create(device=self.get_object())
+        device = self.get_object()
+        config, _ = AudioConfig.objects.get_or_create(device=device)
         serializer = AudioConfigSerializer(config, data=request.data, partial=True) if request.method == 'PATCH' else AudioConfigSerializer(config)
         if request.method == 'PATCH': serializer.is_valid(raise_exception=True); serializer.save()
-        return Response({
+        result = {
             **serializer.data,
-            'delivery': 'local_only',
+            'delivery': 'local_only' if settings.STREET_AUDIO_MODE != 'tts' else 'terminal_tts',
             'terminalConfirmed': False,
-        })
+        }
+        if request.method == 'PATCH' and settings.STREET_AUDIO_MODE == 'tts':
+            command = enqueue_command(device, 'street_set', text=config.street_name)
+            result['command'] = TerminalCommandSerializer(command).data
+        return Response(result)
 
     @action(detail=True, methods=['get'], url_path='protocol')
     def protocol(self, request, device_id=None):
@@ -262,8 +277,6 @@ class DeviceViewSet(viewsets.ModelViewSet):
         if total_duration > 32.001:
             return Response({'detail': f'三类音频总时长 {total_duration:.3f} 秒，不能超过 32 秒。'}, status=400)
         old_name = getattr(config, f'{kind}_file_name')
-        if old_name and default_storage.exists(old_name):
-            default_storage.delete(old_name)
         safe_name = get_valid_filename(upload.name) or f'{kind}.wav'
         storage_name = default_storage.save(
             f'audio/{device.device_id}/{kind}/{safe_name}', ContentFile(content),
@@ -271,8 +284,15 @@ class DeviceViewSet(viewsets.ModelViewSet):
         setattr(config, f'{kind}_file_name', storage_name)
         config.file_metadata = {**config.file_metadata, kind: {**metadata, 'fileName': upload.name}}
         config.save(update_fields=[f'{kind}_file_name', 'file_metadata', 'updated_at'])
+        audio_file = DeviceAudioFile.objects.create(
+            device=device, kind=kind, original_name=upload.name, size=len(content),
+            duration_ms=round(metadata['duration'] * 1000), crc32=metadata['crc32'],
+            metadata=metadata,
+        )
+        audio_file.file.name = storage_name
+        audio_file.save(update_fields=['file'])
         return Response({
-            'file': config.file_metadata[kind], 'totalDuration': round(total_duration, 3),
+            'file': DeviceAudioFileSerializer(audio_file).data, 'totalDuration': round(total_duration, 3),
             'accepted': True,
             'terminalConfirmed': False,
             'delivery': 'server_validated',
@@ -280,16 +300,88 @@ class DeviceViewSet(viewsets.ModelViewSet):
             'nextStep': '等待确认 OneNET 自定义 Topic 后进行终端分片联调',
         }, status=201)
 
+    @action(detail=True, methods=['post'], url_path='file-transfers')
+    def file_transfers(self, request, device_id=None):
+        device = self.get_object()
+        try: audio_file = device.audio_files.get(pk=int(request.data.get('fileId', 0)))
+        except (DeviceAudioFile.DoesNotExist, TypeError, ValueError):
+            return Response({'detail': '音频文件不存在或不属于当前设备。'}, status=404)
+        plan = prepare_file_transfer(audio_file.kind, audio_file.original_name, audio_file.size, audio_file.crc32)
+        transfer = FileTransfer.objects.create(
+            device=device, audio_file=audio_file, transfer_id=plan['transferId'], total_chunks=plan['totalChunks'],
+        )
+        return Response(FileTransferSerializer(transfer).data, status=201)
+
+    @action(detail=True, methods=['get'], url_path=r'file-transfers/(?P<transfer_id>[^/.]+)')
+    def file_transfer_status(self, request, device_id=None, transfer_id=None):
+        transfer = get_object_or_404(self.get_object().file_transfers, transfer_id=transfer_id)
+        return Response(FileTransferSerializer(transfer).data)
+
+    @action(detail=True, methods=['post'], url_path=r'file-transfers/(?P<transfer_id>[^/.]+)/cancel')
+    def file_transfer_cancel(self, request, device_id=None, transfer_id=None):
+        transfer = get_object_or_404(self.get_object().file_transfers, transfer_id=transfer_id)
+        if transfer.status == FileTransfer.Status.SUCCEEDED:
+            return Response({'detail': '已完成的传输不能取消。'}, status=409)
+        transfer.status = FileTransfer.Status.CANCELLED
+        transfer.save(update_fields=['status', 'updated_at'])
+        enqueue_command(transfer.device, 'file_cancel', transfer=transfer.transfer_id)
+        return Response(FileTransferSerializer(transfer).data)
+
+    @action(detail=True, methods=['get'], url_path='audio/manifest')
+    def audio_manifest(self, request, device_id=None):
+        device = self.get_object()
+        commands = []
+        if request.query_params.get('refresh') == '1':
+            commands = [enqueue_command(device, 'audio_get', k=kind) for kind in ('walk', 'rush', 'custom')]
+        return Response({
+            'files': DeviceAudioFileSerializer(device.audio_files.order_by('-created_at'), many=True).data,
+            'refreshCommands': TerminalCommandSerializer(commands, many=True).data,
+            'terminalManifest': device.last_telemetry.get('audioManifest', {}),
+        })
+
+    @action(detail=True, methods=['post'], url_path='audio/play')
+    def audio_play(self, request, device_id=None):
+        kind = str(request.data.get('kind', ''))
+        if kind not in ('walk', 'rush', 'custom'): return Response({'detail': 'kind 无效。'}, status=400)
+        command = enqueue_command(self.get_object(), 'audio_play', k=kind)
+        return Response(TerminalCommandSerializer(command).data, status=202)
+
+    @action(detail=True, methods=['post'], url_path='audio/stop')
+    def audio_stop(self, request, device_id=None):
+        command = enqueue_command(self.get_object(), 'audio_stop')
+        return Response(TerminalCommandSerializer(command).data, status=202)
+
+    @action(detail=True, methods=['get'], url_path=r'commands/(?P<request_id>[^/.]+)')
+    def command_status(self, request, device_id=None, request_id=None):
+        command = get_object_or_404(self.get_object().terminal_commands, request_id=request_id)
+        return Response(TerminalCommandSerializer(command).data)
+
+    @action(detail=True, methods=['get', 'patch'], url_path='signal-interface')
+    def signal_interface(self, request, device_id=None):
+        config, _ = SignalInterfaceConfig.objects.get_or_create(device=self.get_object())
+        serializer = SignalInterfaceSerializer(config, data=request.data, partial=True) if request.method == 'PATCH' else SignalInterfaceSerializer(config)
+        if request.method == 'PATCH': serializer.is_valid(raise_exception=True); serializer.save(confirmed=False)
+        return Response({**serializer.data, 'lastSignal': config.device.last_telemetry.get('signal')})
+
+    @action(detail=True, methods=['get'], url_path='bluetooth')
+    def bluetooth(self, request, device_id=None):
+        device = self.get_object()
+        command = enqueue_command(device, 'bt_get') if request.query_params.get('refresh') == '1' else None
+        return Response({
+            'bluetoothName': device.bluetooth_name,
+            'refreshCommand': TerminalCommandSerializer(command).data if command else None,
+        })
+
     @action(detail=True, methods=['post'], url_path='rename-bluetooth')
     def rename_bluetooth(self, request, device_id=None):
         serializer = BluetoothRenameSerializer(data=request.data); serializer.is_valid(raise_exception=True)
-        device = self.get_object(); device.bluetooth_name = serializer.validated_data['bluetoothName']; device.save(update_fields=['bluetooth_name', 'updated_at'])
+        device = self.get_object()
+        command = enqueue_command(device, 'bt_set', name=serializer.validated_data['bluetoothName'])
         return Response({
-            'bluetoothName': device.bluetooth_name,
-            'accepted': True,
-            'terminalConfirmed': False,
-            'delivery': 'pending_terminal_protocol',
-        }, status=status.HTTP_200_OK)
+            **TerminalCommandSerializer(command).data,
+            'bluetoothName': serializer.validated_data['bluetoothName'],
+            'accepted': True, 'delivery': 'queued_terminal_command',
+        }, status=status.HTTP_202_ACCEPTED)
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]

@@ -8,12 +8,15 @@ import wave
 
 from django.test import SimpleTestCase, override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.files.base import ContentFile
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from rest_framework.test import APITestCase
 
 from .onenet import MAX_FRAME_BYTES, OneNETError, _set_modern_properties, build_device_frame, get_device_parameters, set_device_properties
 from .device_protocol import compact_json, prepare_file_transfer, protocol_manifest, validate_wav_bytes
-from .models import AudioConfig, Device
+from .models import AudioConfig, Device, DeviceAudioFile, FileTransfer, SignalInterfaceConfig, TerminalCommand
+from .management.commands.run_onenet_listener import Command as ListenerCommand
 
 
 class OneNETProtocolTests(SimpleTestCase):
@@ -223,15 +226,26 @@ class PendingTerminalContractTests(APITestCase):
         self.assertEqual(response.data['delivery'], 'local_only')
         self.assertFalse(response.data['terminalConfirmed'])
 
+    @override_settings(STREET_AUDIO_MODE='tts')
+    def test_street_name_tts_queues_terminal_command(self):
+        response = self.client.patch(
+            '/api/devices/SG000001/audio-config/', {'streetName': '中山路'}, format='json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['delivery'], 'terminal_tts')
+        self.assertEqual(response.data['command']['status'], 'queued')
+        self.assertFalse(response.data['terminalConfirmed'])
+
     @override_settings(DEVICE_ADMIN_PASSWORD='test-password')
     def test_bluetooth_response_does_not_claim_terminal_success(self):
         response = self.client.post(
             '/api/devices/SG000001/rename-bluetooth/',
             {'bluetoothName': 'SoundGate-Demo-2', 'password': 'test-password'}, format='json',
         )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data['delivery'], 'pending_terminal_protocol')
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.data['delivery'], 'queued_terminal_command')
         self.assertFalse(response.data['terminalConfirmed'])
+        self.assertEqual(response.data['status'], 'queued')
         self.assertNotIn('password', response.data)
 
     @override_settings(DEVICE_ADMIN_PASSWORD='test-password')
@@ -263,3 +277,99 @@ class PendingTerminalContractTests(APITestCase):
         self.assertEqual(response.data['delivery'], 'server_validated')
         self.assertFalse(response.data['terminalConfirmed'])
         self.assertFalse(response.data['transferPlan']['transportReady'])
+
+        transfer = self.client.post(
+            '/api/devices/SG000001/file-transfers/', {'fileId': response.data['file']['id']}, format='json',
+        )
+        self.assertEqual(transfer.status_code, 201)
+        self.assertEqual(transfer.data['status'], 'queued')
+        self.assertEqual(transfer.data['total_chunks'], response.data['transferPlan']['totalChunks'])
+
+        status_response = self.client.get(
+            f'/api/devices/SG000001/file-transfers/{transfer.data["transferId"]}/',
+        )
+        self.assertEqual(status_response.status_code, 200)
+
+    def test_audio_commands_are_queued_and_queryable(self):
+        play = self.client.post('/api/devices/SG000001/audio/play/', {'kind': 'walk'}, format='json')
+        self.assertEqual(play.status_code, 202)
+        self.assertFalse(play.data['terminalConfirmed'])
+        status_response = self.client.get(f'/api/devices/SG000001/commands/{play.data["requestId"]}/')
+        self.assertEqual(status_response.data['status'], 'queued')
+        stop = self.client.post('/api/devices/SG000001/audio/stop/', {}, format='json')
+        self.assertEqual(stop.status_code, 202)
+        bluetooth = self.client.get('/api/devices/SG000001/bluetooth/?refresh=1')
+        self.assertEqual(bluetooth.status_code, 200)
+        self.assertEqual(bluetooth.data['refreshCommand']['command_type'], 'bt_get')
+
+    def test_signal_interface_rejects_incomplete_rs485_contract(self):
+        response = self.client.patch(
+            '/api/devices/SG000001/signal-interface/', {'mode': 'rs485', 'rs485': {'baudRate': 9600}}, format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        valid = self.client.patch('/api/devices/SG000001/signal-interface/', {
+            'mode': 'rs485', 'rs485': {
+                'baudRate': 9600, 'dataBits': 8, 'stopBits': 1, 'parity': 'none',
+                'address': 1, 'timeoutMs': 500, 'retries': 3,
+            },
+        }, format='json')
+        self.assertEqual(valid.status_code, 200)
+        self.assertFalse(valid.data['confirmed'])
+
+    @patch('devices.management.commands.run_device_command_worker.publish_payload')
+    def test_command_worker_publishes_queued_command(self, publish):
+        publish.return_value = {'topic': 'test/down', 'frameBytes': 40}
+        command = TerminalCommand.objects.create(
+            device=self.device, request_id='abc12345', command_type='audio_stop',
+            payload={'v': 1, 't': 'audio_stop', 'id': 'abc12345'},
+        )
+        call_command('run_device_command_worker', once=True)
+        command.refresh_from_db()
+        self.assertEqual(command.status, TerminalCommand.Status.SENT)
+        self.assertEqual(command.attempts, 1)
+
+    def test_listener_only_confirms_state_after_terminal_ack(self):
+        command = TerminalCommand.objects.create(
+            device=self.device, request_id='ack12345', command_type='bt_set',
+            payload={'v': 1, 't': 'bt_set', 'id': 'ack12345', 'name': '新名称'},
+            status=TerminalCommand.Status.SENT,
+        )
+        ListenerCommand().handle_custom(self.device, {
+            'v': 1, 't': 'ack', 'id': 'ack12345', 'code': 200, 'msg': 'ok',
+        })
+        command.refresh_from_db()
+        self.assertEqual(command.status, TerminalCommand.Status.SUCCEEDED)
+        self.assertIsNotNone(command.confirmed_at)
+
+        ListenerCommand().handle_custom(self.device, {
+            'v': 1, 't': 'bt_info', 'id': 'ack12345', 'name': '新名称',
+        })
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.bluetooth_name, '新名称')
+
+    def test_listener_records_signal_report_and_confirms_interface(self):
+        ListenerCommand().handle_custom(self.device, {
+            'v': 1, 't': 'sig', 'g': 1, 'r': 0, 'f': 0, 'ts': 123,
+        })
+        self.device.refresh_from_db()
+        config = SignalInterfaceConfig.objects.get(device=self.device)
+        self.assertTrue(config.confirmed)
+        self.assertEqual(self.device.last_telemetry['signal']['g'], 1)
+
+    @override_settings(ONENET_COMMAND_TIMEOUT_SECONDS=0, ONENET_COMMAND_MAX_RETRIES=1)
+    @patch('devices.management.commands.run_device_command_worker.publish_payload')
+    def test_transfer_verification_timeout_is_not_left_pending_forever(self, publish):
+        audio_file = DeviceAudioFile.objects.create(
+            device=self.device, kind='walk', original_name='walk.wav', size=4,
+            duration_ms=1, crc32='1234abcd', file=ContentFile(b'1234', name='walk.wav'),
+        )
+        transfer = FileTransfer.objects.create(
+            device=self.device, audio_file=audio_file, transfer_id='file1234',
+            total_chunks=1, next_chunk=1, awaiting_chunk=1,
+            status=FileTransfer.Status.VERIFYING, attempts=1,
+        )
+        call_command('run_device_command_worker', once=True)
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, FileTransfer.Status.FAILED)
+        self.assertIn('校验ACK超时', transfer.error)
+        publish.assert_not_called()

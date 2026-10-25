@@ -1,7 +1,7 @@
 from django.db import transaction
 from django.conf import settings
 from rest_framework import serializers
-from .models import AudioConfig, Device, ScheduleSlot
+from .models import AudioConfig, Device, DeviceAudioFile, FileTransfer, ScheduleSlot, SignalInterfaceConfig, TerminalCommand
 
 class DeviceSerializer(serializers.ModelSerializer):
     id = serializers.CharField(source='device_id', read_only=True)
@@ -121,3 +121,49 @@ class BluetoothRenameSerializer(serializers.Serializer):
         expected = settings.DEVICE_ADMIN_PASSWORD
         if not secrets.compare_digest(value, expected): raise serializers.ValidationError('管理密码错误。')
         return value
+
+
+class DeviceAudioFileSerializer(serializers.ModelSerializer):
+    fileName = serializers.CharField(source='original_name', read_only=True)
+    duration = serializers.SerializerMethodField()
+    class Meta:
+        model = DeviceAudioFile
+        fields = ['id', 'kind', 'fileName', 'size', 'duration', 'crc32', 'metadata', 'created_at']
+    def get_duration(self, obj): return obj.duration_ms / 1000
+
+
+class TerminalCommandSerializer(serializers.ModelSerializer):
+    requestId = serializers.CharField(source='request_id', read_only=True)
+    terminalConfirmed = serializers.SerializerMethodField()
+    class Meta:
+        model = TerminalCommand
+        fields = ['requestId', 'command_type', 'status', 'attempts', 'response', 'error', 'terminalConfirmed', 'created_at', 'updated_at', 'confirmed_at']
+    def get_terminalConfirmed(self, obj): return obj.status == TerminalCommand.Status.SUCCEEDED
+
+
+class FileTransferSerializer(serializers.ModelSerializer):
+    transferId = serializers.CharField(source='transfer_id', read_only=True)
+    fileId = serializers.IntegerField(source='audio_file_id', read_only=True)
+    progress = serializers.SerializerMethodField()
+    terminalConfirmed = serializers.SerializerMethodField()
+    class Meta:
+        model = FileTransfer
+        fields = ['transferId', 'fileId', 'status', 'next_chunk', 'total_chunks', 'progress', 'attempts', 'error', 'terminalConfirmed', 'created_at', 'updated_at', 'confirmed_at']
+    def get_progress(self, obj): return round(obj.next_chunk * 100 / obj.total_chunks, 1) if obj.total_chunks else 0
+    def get_terminalConfirmed(self, obj): return obj.status == FileTransfer.Status.SUCCEEDED
+
+
+class SignalInterfaceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SignalInterfaceConfig
+        fields = ['mode', 'io_inputs', 'rs485', 'confirmed', 'updated_at']
+        read_only_fields = ['confirmed', 'updated_at']
+
+    def validate(self, attrs):
+        mode = attrs.get('mode', getattr(self.instance, 'mode', 'io'))
+        if mode == 'rs485':
+            values = attrs.get('rs485', getattr(self.instance, 'rs485', {}))
+            required = {'baudRate', 'dataBits', 'stopBits', 'parity', 'address', 'timeoutMs', 'retries'}
+            missing = required - set(values)
+            if missing: raise serializers.ValidationError({'rs485': f'缺少字段：{", ".join(sorted(missing))}'})
+        return attrs

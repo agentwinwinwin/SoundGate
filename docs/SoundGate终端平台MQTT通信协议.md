@@ -230,11 +230,11 @@ Topic最终以产品当前OneJSON接入配置为准。终端不得把平台Acces
 | 每周音量计划 | `PUT /api/devices/{id}/schedule/` | 只下发当天当前`DftVolume` | 无需理解星期；只接收当天平台下发值 | 已接入，调度器需常驻运行 |
 | 街道名称 | `PATCH /api/devices/{id}/audio-config/` | 否 | 选择“终端TTS文本”或“平台生成WAV”方案 | 目前仅数据库字段 |
 | 浏览器试听街道名 | 无终端接口 | 否 | 不需要；当前由浏览器SpeechSynthesis完成 | 不是终端功能 |
-| 慢行/快行/自定义声音 | `POST /audio-files/`服务端复验并生成分片计划 | 尚未发送 | 确认Topic、ACK、Flash暂存、CRC、激活和播放 | 平台预检完成，待联合传输测试 |
-| 修改蓝牙名称 | `POST /api/devices/{id}/rename-bluetooth/` | 否 | 蓝牙名称读写命令、持久化、重启行为 | 当前仅改数据库，不能称终端成功 |
+| 慢行/快行/自定义声音 | 上传、传输任务和进度接口 | 后端可排队发送 | 确认Topic、ACK、Flash暂存、CRC、激活和播放 | 平台状态机完成，待真机联合测试 |
+| 修改蓝牙名称 | `POST /api/devices/{id}/rename-bluetooth/` | 后端可排队发送 | 实现`bt_set/bt_get/bt_info`并确认重启行为 | 终端回报前不修改真实名称 |
 | 蓝牙连接/配对 | 无 | 否 | 决定是否需要配对PIN、连接状态和断开命令 | 尚未定义 |
-| 声音测试播放/停止 | 无 | 否 | 指定声音播放、停止、忙状态应答 | 尚未实现 |
-| 文件清单/版本 | 无 | 否 | 返回每个声音文件的大小、CRC和激活状态 | 尚未实现 |
+| 声音测试播放/停止 | `POST /audio/play/`、`POST /audio/stop/` | 后端可排队发送 | 指定声音播放、停止、忙状态应答 | 后端完成，待真机联合测试 |
+| 文件清单/版本 | `GET /audio/manifest/?refresh=1` | 后端可发`audio_get`并保存`audio_info` | 返回大小、CRC和激活状态 | 后端完成，待真机联合测试 |
 
 ## 14 SoundGate后端HTTP接口
 
@@ -247,7 +247,7 @@ Topic最终以产品当前OneJSON接入配置为准。终端不得把平台Acces
 响应：
 
 ```json
-{"version":"1.0","maxFrameBytes":200,"properties":{},"fileTransfer":{"status":"reserved","rawChunkBytes":96},"bluetooth":{"status":"pending_terminal_protocol","maxNameBytes":32},"streetAudio":{"status":"local_only"},"audio":{"status":"pending_terminal_protocol"}}
+{"version":"1.1","maxFrameBytes":200,"properties":{},"fileTransfer":{"status":"preflight_ready","transportStatus":"pending_joint_test","rawChunkBytes":96},"bluetooth":{"status":"pending_terminal_protocol","maxNameBytes":32},"streetAudio":{"status":"local_only"},"audio":{"status":"server_validation_ready"}}
 ```
 
 关键返回参数：
@@ -257,11 +257,12 @@ Topic最终以产品当前OneJSON接入配置为准。终端不得把平台Acces
 | `version` | string | 协议版本 |
 | `maxFrameBytes` | int | 终端MQTT Payload硬上限 |
 | `properties` | object | 字段类型、读写权限、范围和验证状态 |
-| `fileTransfer.status` | string | `reserved/ready/disabled` |
+| `fileTransfer.status` | string | 平台端预检能力；当前为`preflight_ready` |
+| `fileTransfer.transportStatus` | string | 真机传输验收状态；当前为`pending_joint_test` |
 | `fileTransfer.rawChunkBytes` | int | 每个文件分片的原始字节数 |
-| `bluetooth.status` | string | 当前为`pending_terminal_protocol`，后端入口存在但终端协议未接通 |
+| `bluetooth.status` | string | 后端任务入口已实现；当前仍为`pending_terminal_protocol`表示尚未真机验收 |
 | `streetAudio.status` | string | 当前为`local_only`，只保存平台数据 |
-| `audio.status` | string | 当前为`pending_terminal_protocol`，文件与播放命令尚未接通 |
+| `audio.status` | string | 当前为`server_validation_ready`；传输及播放仍以终端ACK为准 |
 
 ### 14.2 主动读取终端属性
 
@@ -363,10 +364,10 @@ Topic最终以产品当前OneJSON接入配置为准。终端不得把平台Acces
 {"bluetoothName":"SoundGate-Demo","password":"<后端管理密码>"}
 ```
 
-`password`是SoundGate后端管理员校验信息，只能在HTTPS请求中使用，绝不能进入MQTT Payload。当前接口仅修改数据库，并用阶段化响应明确标记终端未确认：
+`password`是SoundGate后端管理员校验信息，只能在HTTPS请求中使用，绝不能进入MQTT Payload。当前接口创建`bt_set`终端任务，不会提前修改数据库中的真实名称：
 
 ```json
-{"bluetoothName":"SoundGate-Demo","accepted":true,"terminalConfirmed":false,"delivery":"pending_terminal_protocol"}
+{"requestId":"b102cafe","status":"queued","bluetoothName":"SoundGate-Demo","accepted":true,"terminalConfirmed":false,"delivery":"queued_terminal_command"}
 ```
 
 终端协议完成后，只有终端返回成功并主动读取名称一致时，`terminalConfirmed`才可为`true`。
@@ -391,7 +392,7 @@ Topic最终以产品当前OneJSON接入配置为准。终端不得把平台Acces
 
 ### 14.8 文件和声音接口
 
-服务端WAV上传复验已经实现；终端传输、进度、播放和文件清单仍是对接合同，在自定义Topic联合验证前不得提前声称可用：
+服务端WAV复验和终端任务状态机已经实现；真实设备是否完成仍须以自定义Topic上的ACK和读回结果为准：
 
 | 方法和路径 | 请求 | 成功响应 | 用途 |
 |---|---|---|---|
@@ -569,15 +570,14 @@ Topic最终以产品当前OneJSON接入配置为准。终端不得把平台Acces
 
 ## 16 双方开发任务清单
 
-### 16.1 后端需要补齐
+### 16.1 后端已实现、待真机验收
 
-- 修改蓝牙名称接口不得再把数据库保存当作终端成功；增加MQTT下发、ACK等待和`bt_get`复核。
-- 街道名称接口增加`delivery`和`terminalConfirmed`；根据设备能力选择TTS命令或WAV生成与传输。
-- 服务端WAV复验和文件持久化已完成；继续补充总时长32秒联动校验和文件版本历史。
-- 实现文件传输任务、MQTT发布、ACK状态机、超时重试、进度查询、取消和失败清理。
-- 实现`audio_get/audio_play/audio_stop`对应HTTP接口。
-- 对所有终端操作返回统一的`accepted/terminalConfirmed/requestId/applied/error`结构。
-- 保存终端真实蓝牙名称、文件CRC、大小、激活状态和最后确认时间，目标值与真实值分开存储。
+- 蓝牙`bt_set/bt_get/bt_info`、MQTT任务、ACK等待和真实名称回写已实现。
+- 街道名称支持平台WAV模式；配置为TTS模式时发送`street_set`并等待终端ACK。
+- WAV复验、32秒总时长校验、文件历史、传输任务、逐片ACK、超时重试、取消和最终CRC确认状态已实现。
+- `audio_get/audio_play/audio_stop`及命令状态查询接口已实现。
+- IO/RS-485配置保存和`sig`状态上报留存已实现；未知厂商RS-485帧不在资料不足时编造。
+- 上述“已实现”仅指平台端；正式可用必须完成真实Topic、终端固件和断网恢复联合测试。
 
 ### 16.2 终端需要补齐
 
@@ -612,13 +612,14 @@ Topic最终以产品当前OneJSON接入配置为准。终端不得把平台Acces
 | 参数校验与账号隔离 | `backend/devices/serializers.py`、`backend/devices/models.py` |
 | OneNET读写与200字节组帧 | `backend/devices/onenet.py` |
 | 协议能力与文件预检 | `backend/devices/device_protocol.py` |
+| MQTT扩展命令与文件任务 | `backend/devices/command_transport.py`、`run_device_command_worker.py`、`run_onenet_listener.py` |
 | 当日音量计划调度 | `backend/devices/schedule_dispatch.py` |
 | 前端API与状态交互 | `frontend/src/api/devices.ts`、`frontend/src/services/deviceService.ts` |
 | 蓝牙、街道名、WAV页面 | `DeviceSettingsView.vue`、`AudioSettingsView.vue`、`AudioUploader.vue` |
 
-### 17.2 2026-09-23自动化结果
+### 17.2 自动化结果（2026-10-25更新）
 
-- DRF测试15项全部通过，包括账号设备隔离、OneNET模拟交付、字段类型和范围、UTF-8蓝牙名称限制、未接通能力状态及文档MQTT示例帧。
+- DRF测试25项全部通过，包括账号设备隔离、OneNET模拟交付、字段类型和范围、UTF-8蓝牙名称限制、命令ACK、信号上报、文件校验超时及文档MQTT示例帧。
 - 文档中的23个单行MQTT JSON示例均可解析，最大示例为82字节，无一超过200字节。
 - Django系统检查通过，迁移状态无遗漏。
 - Vue TypeScript检查和Vite生产构建通过。

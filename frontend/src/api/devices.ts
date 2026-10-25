@@ -29,9 +29,9 @@ export async function updateDevice(device: Device) { return (await apiClient.pat
 export async function deleteDevice(id: string) { await apiClient.delete(`/devices/${id}/`) }
 export type LocalDeliveryResult = { delivery: 'local_only' | 'pending_terminal_protocol'; terminalConfirmed: false }
 export async function updateStreetName(id: string, streetName: string) { return (await apiClient.patch<LocalDeliveryResult & { streetName: string }>(`/devices/${id}/audio-config/`, { streetName })).data }
-export async function renameBluetooth(id: string, bluetoothName: string, password: string) { return (await apiClient.post<LocalDeliveryResult & { bluetoothName: string; accepted: true }>(`/devices/${id}/rename-bluetooth/`, { bluetoothName, password })).data }
+export async function renameBluetooth(id: string, bluetoothName: string, password: string) { return (await apiClient.post<{ requestId: string; bluetoothName: string; accepted: true; terminalConfirmed: false; delivery: 'queued_terminal_command' }>(`/devices/${id}/rename-bluetooth/`, { bluetoothName, password })).data }
 export type AudioUploadResult = {
-  file: { kind: 'walk' | 'rush' | 'custom'; fileName: string; size: number; duration: number; channels: number; sampleRate: number; bitDepth: number; crc32: string }
+  file: { id: number; kind: 'walk' | 'rush' | 'custom'; fileName: string; size: number; duration: number; channels: number; sampleRate: number; bitDepth: number; crc32: string }
   accepted: true
   terminalConfirmed: false
   delivery: 'server_validated'
@@ -42,6 +42,14 @@ export async function uploadAudioFile(id: string, kind: 'walk' | 'rush' | 'custo
   const form = new FormData(); form.append('kind', kind); form.append('file', file)
   return (await apiClient.post<AudioUploadResult>(`/devices/${id}/audio-files/`, form, { timeout: 30000 })).data
 }
+export type TerminalCommand = { requestId: string; command_type: string; status: string; attempts: number; terminalConfirmed: boolean; error: string }
+export type FileTransfer = { transferId: string; fileId: number; status: string; next_chunk: number; total_chunks: number; progress: number; terminalConfirmed: boolean; error: string }
+export async function createFileTransfer(id: string, fileId: number) { return (await apiClient.post<FileTransfer>(`/devices/${id}/file-transfers/`, { fileId })).data }
+export async function fetchFileTransfer(id: string, transferId: string) { return (await apiClient.get<FileTransfer>(`/devices/${id}/file-transfers/${transferId}/`)).data }
+export async function cancelFileTransfer(id: string, transferId: string) { return (await apiClient.post<FileTransfer>(`/devices/${id}/file-transfers/${transferId}/cancel/`)).data }
+export async function playAudio(id: string, kind: 'walk' | 'rush' | 'custom') { return (await apiClient.post<TerminalCommand>(`/devices/${id}/audio/play/`, { kind })).data }
+export async function stopAudio(id: string) { return (await apiClient.post<TerminalCommand>(`/devices/${id}/audio/stop/`)).data }
+export async function fetchCommand(id: string, requestId: string) { return (await apiClient.get<TerminalCommand>(`/devices/${id}/commands/${requestId}/`)).data }
 export type OneNETParameters = {
   DftEdMinute: number; DftEnable: number; DftStHour: number; DftStMinute: number
   DftVolume: number; DtfEdHour: number; Period: number; RushTime: number; WalkTime: number

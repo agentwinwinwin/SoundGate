@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useDeviceStore } from '@/stores/device'
 import { deviceService } from '@/services/deviceService'
-import type { OneNETParameters, OneNETParameterState } from '@/api/devices'
+import { fetchCommand, type OneNETParameters, type OneNETParameterState } from '@/api/devices'
 import DeviceStatus from '@/components/DeviceStatus.vue'
 import PageHeading from '@/components/PageHeading.vue'
 
@@ -13,6 +13,7 @@ const bluetoothForm = reactive({ name: '', password: '' })
 const workForm = reactive({ DftStHour: 0, DftStMinute: 0, DtfEdHour: 23, DftEdMinute: 59 })
 const parameterState = ref<Partial<Record<keyof OneNETParameters, OneNETParameterState>>>({})
 const loading = ref(false); const saving = ref(false)
+const bluetoothSaving = ref(false)
 const startTime = computed(() => `${String(workForm.DftStHour).padStart(2, '0')}:${String(workForm.DftStMinute).padStart(2, '0')}`)
 const endTime = computed(() => `${String(workForm.DtfEdHour).padStart(2, '0')}:${String(workForm.DftEdMinute).padStart(2, '0')}`)
 const stateText = (key: keyof OneNETParameters) => {
@@ -41,8 +42,20 @@ async function saveWorkParameters() {
 }
 async function submitBluetooth() {
   if (!bluetoothForm.name.trim()) return ElMessage.warning('请输入新蓝牙名称')
-  try { await store.renameBluetooth(bluetoothForm.name.trim(), bluetoothForm.password); bluetoothForm.password = ''; ElMessage.warning('名称已保存到平台；终端蓝牙协议尚未接通') }
+  bluetoothSaving.value = true
+  try {
+    const result = await store.renameBluetooth(bluetoothForm.name.trim(), bluetoothForm.password); bluetoothForm.password = ''
+    ElMessage.info('修改命令已发送，正在等待终端响应')
+    for (let i = 0; i < 30; i++) {
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      const command = await fetchCommand(store.selected.id, result.requestId)
+      if (command.status === 'succeeded') { ElMessage.success('终端已确认修改，真实名称将在设备回报后更新'); return }
+      if (command.status === 'failed') throw new Error(command.error || '终端响应失败')
+    }
+    ElMessage.warning('终端暂未响应，可稍后重新读取')
+  }
   catch (error: any) { ElMessage.error(error?.response?.data?.detail || error?.message || '修改失败') }
+  finally { bluetoothSaving.value = false }
 }
 onMounted(async () => { store.select(String(route.params.id)); bluetoothForm.name = store.selected.bluetoothName; await loadWorkParameters() })
 </script>
@@ -65,7 +78,7 @@ onMounted(async () => { store.select(String(route.params.id)); bluetoothForm.nam
   </section>
   <div class="detail-grid">
     <section class="card info-list"><div class="card-title"><h3>设备信息</h3></div><div><span>设备名称</span><b>{{ store.selected.name }}</b></div><div><span>设备编号</span><b>{{ store.selected.id }}</b></div><div><span>当前蓝牙名称</span><b>{{ store.selected.bluetoothName }}</b></div><div><span>在线状态</span><DeviceStatus :online="store.selected.online"/></div></section>
-    <section class="card"><div class="card-title"><div><h3>修改蓝牙名称</h3><p>需要管理密码验证</p></div></div><el-form label-position="top"><el-form-item label="新蓝牙名称"><el-input v-model="bluetoothForm.name" maxlength="32" show-word-limit/></el-form-item><el-form-item label="管理密码"><el-input v-model="bluetoothForm.password" type="password" show-password autocomplete="current-password"/></el-form-item><el-button type="primary" @click="submitBluetooth">验证并修改</el-button></el-form></section>
+    <section class="card"><div class="card-title"><div><h3>修改蓝牙名称</h3><p>需要管理密码验证</p></div></div><el-form label-position="top" :disabled="bluetoothSaving"><el-form-item label="新蓝牙名称"><el-input v-model="bluetoothForm.name" maxlength="32" show-word-limit/></el-form-item><el-form-item label="管理密码"><el-input v-model="bluetoothForm.password" type="password" show-password autocomplete="current-password"/></el-form-item><el-button type="primary" :loading="bluetoothSaving" @click="submitBluetooth">验证并修改</el-button></el-form></section>
   </div>
 </template>
 

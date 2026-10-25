@@ -45,6 +45,16 @@ def compact_json(payload):
     return encoded
 
 
+def build_command(command_type, request_id, **params):
+    payload = {'v': 1, 't': command_type, 'id': request_id, **params}
+    compact_json(payload)
+    return payload
+
+
+def build_file_chunk(transfer_id, number, content):
+    return build_command('fc', transfer_id, n=number, d=base64.b64encode(content).decode())
+
+
 def validate_property_values(params):
     unknown = set(params) - set(PROPERTY_DEFINITIONS)
     if unknown:
